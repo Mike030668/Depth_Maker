@@ -9,3 +9,6 @@ Thumbs.db
 
 # Models
 models/
+
+# Windows system files
+desktop.ini
