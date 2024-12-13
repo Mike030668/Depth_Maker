@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch, mock_open, MagicMock
 import os
 import numpy as np
-import cv2
+#import cv2
 
 from depth_maker.depth_maker_v1.utils import (
     download_model,
