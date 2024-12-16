@@ -24,7 +24,7 @@ from PIL import Image
 
 class LogoOverlayPipeline:
     def __init__(self, dir_path=None, background_filename=None, logos_info=None,
-                 combined_image_path='combined_image.png', bg_color=(0, 0, 0),
+                 combined_image_path=r'results\combined_image.png', bg_color=(0, 0, 0),
                  threshold=10, layered_image=None, background_size=None,
                  enable_logging=True):
         
@@ -33,9 +33,12 @@ class LogoOverlayPipeline:
 
         # Use pathlib for cross-platform path handling
         self.dir_path = Path(dir_path) if dir_path else None
-        self.combined_image_path = Path(combined_image_path)
+        self.combined_image_path = self.dir_path / Path(combined_image_path) if dir_path else Path(combined_image_path)
         self.bg_color = bg_color
         self.threshold = threshold
+        self.enable_logging_flag = enable_logging
+
+
 
         if layered_image:
             # Initialize from a layered image object
@@ -207,14 +210,15 @@ class LogoOverlayPipeline:
         Saves the final combined image by rendering all layers.
         Utilizes the utility function `save_image`.
         """
-        try:
-            combined_image = layered_image.render()
-            ensure_directory(self.combined_image_path.parent)
-            save_image(combined_image, self.combined_image_path)
-            self.logger.info(f"Combined image saved to {self.combined_image_path}.")
-        except Exception as e:
-            self.logger.error(f"Failed to save combined image to {self.combined_image_path}. Error: {e}")
-            raise
+        #try:
+        combined_image = layered_image.render()
+        #ensure_directory(self.combined_image_path.parent)
+        save_image(combined_image, self.combined_image_path)
+        self.logger.info(f"Combined image saved to {self.combined_image_path}.")
+        #except Exception as e:
+         #   self.logger.error(f"Failed to save combined image to {self.combined_image_path}. Error: {e}")
+        #    print(f"Failed to save combined image to {self.combined_image_path}. Error: {e}")
+        #    raise
 
 
     @staticmethod

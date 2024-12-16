@@ -15,19 +15,19 @@ Depth_Maker/
 │       ├── __init__.py
 │       └── ...            
 ├── models/
-│   ├── Depth-Anything-V2/
+│   ├── Depth_Anything_V2/
 │   │   ├── __init__.py
 │   │   └── ...            # other modules of Depth-Anything-V2
-│   ├── Depth-ZOE/
+│   ├── Depth_ZOE/
 │   │   ├── __init__.py
 │   │   └── ...            # other modules of Depth-ZOE
 │   └── ...
 ├── checkpoints/
 │   ├── __init__.py
-│   ├── Depth-Anything-V2/
-│   │   ├── depth_anything_v2_vitl.pth  # Model checkpoint
-│   ├── Depth-ZOE/
-│   │   ├── depth_zoe.pth  # Model checkpoint
+│   ├── Depth_Anything_V2/
+│   │   └──depth_anything_v2_vitl.pth  # Model checkpoint
+│   ├── Depth_ZOE/
+│   │   └── depth_zoe.pth  # Model checkpoint
 │   └── ...
 ├── tests/
 │   ├── __init__.py

@@ -280,6 +280,7 @@ def display_image(image: np.ndarray, title: str = "Image", cmap: str = None, fig
 # Additional Utilities 
 # ---------------------
 
+
 def save_image(image: np.ndarray, save_path: str):
     """
     Saves an image to the specified path.
@@ -291,27 +292,23 @@ def save_image(image: np.ndarray, save_path: str):
     try:
         if len(image.shape) == 2:
             # Grayscale image
-            success = cv2.imwrite(save_path, image)
+            Image.fromarray(image).save(save_path)#
         elif image.shape[2] == 4:
             # Convert BGRA to RGBA for saving
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
-            success = cv2.imwrite(save_path, image)
+            Image.fromarray(image).save(save_path)#
         elif image.shape[2] == 3:
             # Convert BGR to RGB for saving
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            success = cv2.imwrite(save_path, image)
+            Image.fromarray(image).save(save_path)
+
         else:
             logging.error("Unsupported image format for saving.")
             raise ValueError("Unsupported image format for saving.")
 
-        if success:
-            logging.info(f"Image saved to {save_path}.")
-        else:
-            logging.error(f"Failed to save image to {save_path}.")
     except Exception as e:
         logging.error(f"An error occurred while saving the image to {save_path}: {e}")
         raise
-
 
 def ensure_directory(path: Path):
     """
