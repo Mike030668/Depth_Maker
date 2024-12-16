@@ -1,4 +1,4 @@
-# depth_maker/depth_maker_v1/logo_overlay_pipeline.py
+# depth_maker/depth_maker_v1/constructor_layered_image.py
 
 from .utils import (
     resize_image,
@@ -245,6 +245,7 @@ class LogoOverlayPipeline:
 
         plt.tight_layout()
         plt.show()
+
 
 
 class LayeredImageObject:

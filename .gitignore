@@ -8,8 +8,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Models
-models/
+# checkpoints
+checkpoints/
 
 # Windows system files
 desktop.ini

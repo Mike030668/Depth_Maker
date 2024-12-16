@@ -1,5 +1,4 @@
 
-
 Depth_Maker/
 │
 ├── README.md
@@ -7,17 +6,29 @@ Depth_Maker/
 ├── .gitignore
 ├── depth_maker/
 │   ├── __init__.py
-│   ├── depth_maker_v1/
+│   ├── depth_maker_v1/  # first version maker
 │   │   ├── __init__.py
-│   │   ├── logo_overlay_pipeline.py
-│   │   ├── layered_image_object.py
-│   │   ├── stylized_layered_image_object.py
+│   │   ├── constructor_layered_image.py
+│   │   ├── stylized_layered_masks.py
 │   │   └── utils.py
-│   └── depth_maker_v2/
+│   └── depth_maker_v2/  # second version maker
 │       ├── __init__.py
-│       └── ...            # Future modules
+│       └── ...            
 ├── models/
-│   └── depth_anything_v2_vitl.pth  # Model checkpoint
+│   ├── Depth-Anything-V2/
+│   │   ├── __init__.py
+│   │   └── ...            # other modules of Depth-Anything-V2
+│   ├── Depth-ZOE/
+│   │   ├── __init__.py
+│   │   └── ...            # other modules of Depth-ZOE
+│   └── ...
+├── checkpoints/
+│   ├── __init__.py
+│   ├── Depth-Anything-V2/
+│   │   ├── depth_anything_v2_vitl.pth  # Model checkpoint
+│   ├── Depth-ZOE/
+│   │   ├── depth_zoe.pth  # Model checkpoint
+│   └── ...
 ├── tests/
 │   ├── __init__.py
 │   └── test_utils.py
