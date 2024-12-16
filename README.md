@@ -1,6 +1,6 @@
 <img src="tests\backgrounds\tree_road_2.webp" alt="webp"  width="350"/> <img src="tests\objects\sbercat_book.png" alt="png"  width="250"/> <img src="tests\objects\pngtree_red_1.png" alt="png"  width="100"/> <img src="tests\objects\pngtree_red_2.png" alt="png"  width="100"/>
 
-<img src="results\combined_image.png" alt="png"  width="390"/> <img src="results\combined_masks\depth_overlay_combined.png" alt="png"  width="390"/> 
+<img src="results\combined_image.png" alt="png"  width="370"/> <img src="results\combined_masks\depth_overlay_combined.png" alt="png"  width="370"/> 
 
 
 Depth_Maker/
