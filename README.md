@@ -1,4 +1,6 @@
-<img src="tests\backgrounds\tree_road_2.webp" alt="webp"  width="450"/> <img src="tests\objects\sbercat_book.png" alt="png"  width="450"/> 
+<img src="tests\backgrounds\tree_road_2.webp" alt="webp"  width="450"/> <img src="tests\objects\sbercat_book.png" alt="png"  width="250"/> 
+
+<img src="results\combined_image.png" alt="png"  width="350"/> <img src="results\combined_masks\depth_overlay_combined.png" alt="png"  width="350"/> 
 
 
 Depth_Maker/
