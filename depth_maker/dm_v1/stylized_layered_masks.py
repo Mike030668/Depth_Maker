@@ -12,6 +12,7 @@ import warnings
 import pickle
 
 from models.Depth_Anything_V2.depth_anything_v2.dpt import DepthAnythingV2
+from depth_maker.dm_v1.constructor_layered_image import LayeredImageObject  # 
 
 
 class StylizedLayeredImageObject:
@@ -204,14 +205,21 @@ class StylizedLayeredImageObject:
                 else:
                     rgba = processed.copy()
 
-            if not is_background and rotation_angle != 0:
-                rgba = self.rotate_rgba(rgba, rotation_angle)
+        #    if not is_background and rotation_angle != 0:
+        #       rgba = self.rotate_rgba(rgba, rotation_angle)
 
-            if reflection != 'none':
-                rgba = self.reflect_image(rgba, reflection)
+        #   if reflection != 'none':
+        #       rgba = self.reflect_image(rgba, reflection)
         else:
             rgba = processed
+            
+        # После того, как вы установили rgba, вынесите логику вращения и отражения вне зависимости от метода:
+        if not is_background and rotation_angle != 0:
+            rgba = self.rotate_rgba(rgba, rotation_angle)
 
+        if reflection != 'none':
+            rgba = self.reflect_image(rgba, reflection)
+        
         return rgba, depth_map
 
     def rotate_rgba(self, rgba_image, angle):
@@ -492,3 +500,27 @@ class StylizedLayeredImageObject:
 
         Image.fromarray(combined_image).save(filepath)
         self.logger.info(f"Combined image saved to {filepath}")
+
+
+    def save_stylized_layered_image_object(self, filepath: str):
+        """
+        Saves a new LayeredImageObject derived from the current stylized state.
+
+        This will create a new LayeredImageObject using the processed background and logos, 
+        allowing you to load it later and apply further brightness/contrast adjustments without 
+        re-running expensive operations like depth estimation.
+        """
+        # Создаем новый layered image object из текущего фонового изображения и обработанных логотипов
+        stylized_layered_image = LayeredImageObject(self.background)  # фон уже в BGR
+
+        for logo_info in self.processed_logos:
+            stylized_layered_image.add_logo(
+                logo_info['image'],
+                logo_info['coords'][0],
+                logo_info['coords'][1],
+                logo_info['alpha']
+            )
+
+        # Сохраняем объект
+        stylized_layered_image.save(filepath)
+        self.logger.info(f"Stylized layered image object saved to {filepath}")

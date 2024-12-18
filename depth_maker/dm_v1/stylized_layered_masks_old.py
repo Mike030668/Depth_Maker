@@ -224,16 +224,23 @@ class StylizedLayeredImageObject:
                     rgba = processed.copy()
 
             # 4. Rotate RGBA image if rotation is specified (logos only)
-            if not is_background and rotation_angle != 0:
-                rgba = self.rotate_rgba(rgba, rotation_angle)
+            #if not is_background and rotation_angle != 0:
+            #    rgba = self.rotate_rgba(rgba, rotation_angle)
 
             # 5. Reflection if specified
-            if reflection != 'none':
-                rgba = self.reflect_image(rgba, reflection)
+            #if reflection != 'none':
+             #   rgba = self.reflect_image(rgba, reflection)
 
             # 6. Depth map was already handled for 'depth_anth'
         else:
             rgba = processed  # For 'depth_anth', processed is the depth colormap with brightness/contrast applied
+        
+        # После того, как вы установили rgba, вынесите логику вращения и отражения вне зависимости от метода:
+        if not is_background and rotation_angle != 0:
+            rgba = self.rotate_rgba(rgba, rotation_angle)
+
+        if reflection != 'none':
+            rgba = self.reflect_image(rgba, reflection)
 
         return rgba, depth_map
 
@@ -397,6 +404,7 @@ class StylizedLayeredImageObject:
 
     def pad64(self, x):
         return (64 - x % 64) % 64
+
 
     def overlay_logo(self, background, logo, x2, y2, alpha=1.0, original_width=None, original_height=None):
         """
@@ -593,5 +601,6 @@ class StylizedLayeredImageObject:
             combined_image = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
 
         # Save the image using OpenCV (which now has the correct channel order)
+        #cv2.imwrite(filepath, combined_image)
         Image.fromarray(combined_image).save(filepath)#
         print(f"Combined image saved to {filepath}")
