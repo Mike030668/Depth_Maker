@@ -1,10 +1,11 @@
 # depth_maker/depth_maker_v1/utils.py
 
 import os
+import sys
 import cv2
 import numpy as np
 import requests
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import logging
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -12,7 +13,8 @@ from pathlib import Path
 import logging
 
 
-def setup_logging(log_level=logging.INFO, log_file: str = None, enable_logging: bool = True):
+def setup_logging(log_level=logging.INFO, log_file: str = None, 
+enable_logging: bool = True):
     """
     Настраивает конфигурацию логирования.
     
@@ -82,6 +84,7 @@ def download_model(url: str, save_path: str):
             unit='iB',
             unit_scale=True,
             unit_divisor=1024,
+            file=sys.stdout  # Попытка направить вывод в stdout
         ) as bar:
             for data in response.iter_content(block_size):
                 size = file.write(data)
@@ -323,33 +326,6 @@ def ensure_directory(path: Path):
     except Exception as e:
         logging.error(f"Failed to create directory {path}: {e}")
         raise
-
-
-# ---------------------
-# Logging Utilities
-# ---------------------
-
-def setup_logging(log_level=logging.INFO, log_file: str = None):
-    """
-    Sets up the logging configuration.
-
-    Parameters:
-        log_level (int): The logging level (e.g., logging.INFO, logging.DEBUG).
-        log_file (str, optional): If provided, logs will also be written to this file.
-    """
-    logger = logging.getLogger()
-    if not logger.hasHandlers():
-        handlers = [logging.StreamHandler()]
-        if log_file:
-            handlers.append(logging.FileHandler(log_file))
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=handlers
-        )
-        logging.info("Logging is set up.")
-    else:
-        logging.info("Logging is already configured.")
 
 
 def load_image(path, mode=cv2.IMREAD_UNCHANGED):
