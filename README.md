@@ -10,12 +10,12 @@ Depth_Maker/
 ├── .gitignore
 ├── depth_maker/
 │   ├── __init__.py
-│   ├── depth_maker_v1/  # first version maker
+│   ├── dm_v1/  # first version maker
 │   │   ├── __init__.py
 │   │   ├── constructor_layered_image.py
 │   │   ├── stylized_layered_masks.py
 │   │   └── utils.py
-│   └── depth_maker_v2/  # second version maker
+│   └── dm_v2/  # second version maker
 │       ├── __init__.py
 │       └── ...            
 ├── models/
