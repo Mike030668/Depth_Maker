@@ -4,7 +4,6 @@ import os
 import cv2
 import numpy as np
 import torch
-import logging
 import matplotlib.pyplot as plt
 from PIL import Image
 import requests
@@ -15,8 +14,7 @@ from models.Depth_Anything_V2.depth_anything_v2.dpt import DepthAnythingV2
 
 
 class StylizedLayeredImageObject:
-    def __init__(self, layered_image_obj, background_params=None, logos_params=None, final_processing_params=None,
-                 depth_model_checkpoint=None, depth_encoder='vitl', enable_logging=True):
+    def __init__(self, layered_image_obj, background_params=None, logos_params=None, final_processing_params=None, depth_model_checkpoint=None, depth_encoder='vitl'):
         """
         Initialize StylizedLayeredImageObject with parameters for background and logos.
         Optionally, provide a depth model checkpoint to enable depth estimation.
@@ -28,19 +26,14 @@ class StylizedLayeredImageObject:
         - final_processing_params (dict): Post-processing parameters.
         - depth_model_checkpoint (str): Path to Depth-Anything-V2 model checkpoint.
         - depth_encoder (str): Encoder type for Depth-Anything-V2 ('vits', 'vitb', 'vitl', 'vitg').
-        - enable_logging (bool): Whether to enable logging for this object.
         """
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.enable_logging_flag = enable_logging
-        if not enable_logging:
-            self.logger.disabled = True
-
         self.layered_image_obj = layered_image_obj
         self.final_processing_params = final_processing_params or {}
         self.depth_model_checkpoint = depth_model_checkpoint
         self.depth_encoder = depth_encoder
         self.depth_model = None
 
+        # Load depth model if checkpoint is provided
         if self.depth_model_checkpoint:
             self.depth_model = self.load_depth_model(self.depth_model_checkpoint, self.depth_encoder)
 
@@ -74,28 +67,22 @@ class StylizedLayeredImageObject:
                 'coords': logo_info['coords'],
                 'alpha': logo_info['alpha'],
                 'original_size': logo_info['original_size'],
-                'depth_map': depth_map
+                'depth_map': depth_map  # Store depth map if generated
             })
 
-    def enable_logging_method(self, log_level=logging.INFO):
-        """
-        Enable logging for this object.
-        """
-        self.logger.setLevel(log_level)
-        self.logger.disabled = False
-        self.enable_logging_flag = True
-        self.logger.info("Логирование включено.")
-
-    def disable_logging_method(self):
-        """
-        Disable logging for this object.
-        """
-        self.logger.disabled = True
-        self.enable_logging_flag = False
-        # Используем print, т.к. логирование отключено
-        print("Логирование отключено.")
 
     def load_depth_model(self, checkpoint_path: str, encoder='vitl', device: str = "cuda" if torch.cuda.is_available() else "cpu") -> DepthAnythingV2:
+        """
+        Load the Depth-Anything-V2 model.
+
+        Parameters:
+        - checkpoint_path (str): Path to the model checkpoint.
+        - encoder (str): Encoder type.
+        - device (str): Device to load the model on.
+
+        Returns:
+        - model (DepthAnythingV2): Loaded depth model.
+        """
         model_configs = {
             'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
             'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
@@ -104,39 +91,57 @@ class StylizedLayeredImageObject:
         }
 
         if encoder not in model_configs:
-            self.logger.error(f"Unsupported encoder type: {encoder}. Supported types: {list(model_configs.keys())}")
-            raise ValueError(f"Unsupported encoder type: {encoder}.")
+            raise ValueError(f"Unsupported encoder type: {encoder}. Supported types: {list(model_configs.keys())}")
 
         model = DepthAnythingV2(**model_configs[encoder])
 
+        # Set weights_only=True to resolve FutureWarning and enhance security
         state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
         model.to(device)
         model.eval()
-        self.logger.info(f"Depth model loaded with encoder '{encoder}' on device '{device}'.")
+        print(f"Depth model loaded with encoder '{encoder}' on device '{device}'.")
         return model
 
     def process_image(self, image, params, is_background=False):
+        """
+        Process a single image (background or logo) according to the specified parameters.
+        Steps:
+        - Extract original alpha if present.
+        - Apply chosen method (none, lineart, canny, depth_anth).
+        - Apply brightness/contrast (for non-depth methods or after depth colormap).
+        - Reintroduce alpha channel (for lineart/canny/depth_anth, via a thresholded mask or existing alpha).
+        - If logo (not background), apply rotation if specified.
+        - Apply reflection if specified.
+        - For 'depth_anth' method, replace image with depth colormap and apply brightness/contrast.
+
+        Returns:
+        - processed_rgba (np.ndarray): The processed image (either stylized or depth colormap).
+        - depth_map (np.ndarray or None): The depth map if 'depth_anth' is specified, else None.
+        """
         method = params.get('method', 'none')
         brightness = params.get('brightness', 0)
         contrast = params.get('contrast', 1.0)
         rotation_angle = params.get('rotation_angle', 0)
         reflection = params.get('reflection', 'none')
 
+        # Check if original image has an alpha channel
         original_has_alpha = (image.shape[2] == 4)
         if original_has_alpha:
+            # Extract original alpha
             b, g, r, original_alpha = cv2.split(image)
             original_rgb = cv2.merge((b, g, r))
         else:
             original_rgb = image
             original_alpha = None
 
+        # Initialize depth_map
         depth_map = None
 
+        # 1. Apply chosen method
         if method == 'none':
             processed = original_rgb.copy()
         elif method == 'lineart':
-            self.logger.info("Applying lineart method.")
             processed = self.generate_lineart(
                 original_rgb,
                 gaussian_sigma=params.get('gaussian_sigma', 6.0),
@@ -145,7 +150,6 @@ class StylizedLayeredImageObject:
                 upscale_method=params.get('upscale_method', 'INTER_CUBIC')
             )
         elif method == 'canny':
-            self.logger.info("Applying canny method.")
             processed = self.generate_canny(
                 original_rgb,
                 low_threshold=params.get('low_threshold', 100),
@@ -154,67 +158,97 @@ class StylizedLayeredImageObject:
                 upscale_method=params.get('upscale_method', 'INTER_CUBIC')
             )
         elif method == 'depth_anth':
+            # For depth_anth, generate depth map and replace image with depth colormap
             if not self.depth_model:
-                self.logger.error("Depth model not loaded. Can't apply 'depth_anth'.")
-                raise ValueError("Depth model not loaded.")
-            self.logger.info("Generating depth map...")
+                raise ValueError("Depth model not loaded. Provide a valid model checkpoint during initialization.")
+
+            print("Generating depth map...")
+            # Ensure the image is in RGB for the depth model
             depth_input = cv2.cvtColor(original_rgb, cv2.COLOR_BGR2RGB)
             depth_map = self.depth_model.infer_image(depth_input)
-            self.logger.info("Depth map generation complete.")
+            print("Depth map generation complete.")
 
+            # Normalize the depth map to 0-255
             depth_norm = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min() + 1e-5) * 255
             depth_norm = depth_norm.astype(np.uint8)
+
+            # Apply brightness and contrast adjustments to the normalized depth map
             depth_norm = self.apply_brightness_contrast(depth_norm, brightness=brightness, contrast=contrast)
 
+            # Apply color map for visualization
             depth_colormap = cv2.applyColorMap(depth_norm, cv2.COLORMAP_MAGMA)
 
+            # If original image had alpha, retain it; else, create full opacity
             if original_has_alpha:
                 depth_rgba = cv2.merge((depth_colormap, original_alpha))
             else:
                 depth_rgba = cv2.cvtColor(depth_colormap, cv2.COLOR_BGR2BGRA)
-                depth_rgba[:, :, 3] = 255
+                depth_rgba[:, :, 3] = 255  # Set alpha to fully opaque
+
             processed = depth_rgba
         else:
-            self.logger.error(f"Unknown processing method: {method}")
             raise ValueError(f"Unknown processing method: {method}")
 
+        # 2. Apply brightness and contrast (if not 'depth_anth' as depth_colormap is already adjusted)
         if method != 'depth_anth':
             processed = self.apply_brightness_contrast(processed, brightness=brightness, contrast=contrast)
 
+        # 3. Reintroduce alpha channel for non-depth methods
         if method != 'depth_anth':
             if method == 'none' and original_has_alpha:
+                # Just reattach original alpha, resize if dimensions changed
                 if processed.shape[:2] != original_alpha.shape[:2]:
                     original_alpha = cv2.resize(original_alpha, (processed.shape[1], processed.shape[0]), interpolation=cv2.INTER_AREA)
                 rgba = cv2.merge((processed[:, :, 0], processed[:, :, 1], processed[:, :, 2], original_alpha))
             else:
+                # For lineart/canny: create a binary mask or use existing alpha
                 if method in ['lineart', 'canny']:
                     gray = cv2.cvtColor(processed, cv2.COLOR_BGR2GRAY)
                     _, mask = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY)
                 elif method == 'depth_anth':
+                    # Already handled above
                     mask = None
 
                 if method in ['lineart', 'canny']:
                     if original_has_alpha:
+                        # Combine mask with original_alpha
                         if original_alpha.shape[:2] != processed.shape[:2]:
                             original_alpha = cv2.resize(original_alpha, (processed.shape[1], processed.shape[0]), interpolation=cv2.INTER_AREA)
                         combined_alpha = cv2.bitwise_and(original_alpha, mask)
                     else:
+                        # No original alpha, use mask as alpha
                         combined_alpha = mask
+
                     rgba = cv2.merge((processed[:, :, 0], processed[:, :, 1], processed[:, :, 2], combined_alpha))
                 else:
                     rgba = processed.copy()
 
+            # 4. Rotate RGBA image if rotation is specified (logos only)
             if not is_background and rotation_angle != 0:
                 rgba = self.rotate_rgba(rgba, rotation_angle)
 
+            # 5. Reflection if specified
             if reflection != 'none':
                 rgba = self.reflect_image(rgba, reflection)
+
+            # 6. Depth map was already handled for 'depth_anth'
         else:
-            rgba = processed
+            rgba = processed  # For 'depth_anth', processed is the depth colormap with brightness/contrast applied
 
         return rgba, depth_map
 
+
     def rotate_rgba(self, rgba_image, angle):
+        """
+        Rotates the given RGBA image around its center by the specified angle.
+
+        Parameters:
+        - rgba_image (np.ndarray): RGBA image to rotate.
+        - angle (float): Angle in degrees. Positive values rotate counterclockwise.
+
+        Returns:
+        - rotated (np.ndarray): Rotated RGBA image.
+        """
         (h, w) = rgba_image.shape[:2]
         center = (w // 2, h // 2)
         M = cv2.getRotationMatrix2D(center, angle, 1.0)
@@ -225,6 +259,7 @@ class StylizedLayeredImageObject:
         M[0, 2] += (new_w / 2) - center[0]
         M[1, 2] += (new_h / 2) - center[1]
 
+        # Rotate with BORDER_CONSTANT and a transparent (0,0,0,0) background
         rotated = cv2.warpAffine(
             rgba_image,
             M,
@@ -233,32 +268,41 @@ class StylizedLayeredImageObject:
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=(0, 0, 0, 0)
         )
-        self.logger.debug(f"Rotated image by {angle} degrees.")
         return rotated
 
     def reflect_image(self, rgba_image, mode):
+        """
+        Reflects the given RGBA image according to the mode:
+        - 'horizontal': reflect left-right
+        - 'vertical': reflect top-bottom
+        - 'both': reflect both horizontally and vertically
+        - 'none': no reflection
+        """
         if mode == 'horizontal':
-            self.logger.debug("Reflecting image horizontally.")
             return cv2.flip(rgba_image, 1)
         elif mode == 'vertical':
-            self.logger.debug("Reflecting image vertically.")
             return cv2.flip(rgba_image, 0)
         elif mode == 'both':
-            self.logger.debug("Reflecting image both horizontally and vertically.")
             return cv2.flip(rgba_image, -1)
-        return rgba_image
+        return rgba_image  # 'none' case
 
     def apply_brightness_contrast(self, image, brightness=0, contrast=1.0):
+        """
+        Adjusts brightness and contrast of the given image.
+
+        brightness: int, positive to brighten, negative to darken
+        contrast: float, >1.0 increases contrast, between 0 and 1 decreases contrast, 1.0 no change
+        """
         img_float = image.astype(np.float32)
         img_float = img_float * contrast + brightness
         img_float = np.clip(img_float, 0, 255).astype(np.uint8)
         return img_float
 
     def generate_lineart(self, input_image, gaussian_sigma=6.0, intensity_threshold=8, detect_resolution=0, upscale_method="INTER_CUBIC"):
-        self.logger.debug("Generating line art.")
         input_image, _ = self.common_input_validate(input_image, "np")
         input_image, remove_pad = self.resize_image_with_pad(input_image, detect_resolution, upscale_method)
 
+        print(f"Generating line art with params: gaussian_sigma={gaussian_sigma}, intensity_threshold={intensity_threshold}, detect_resolution={detect_resolution}")
         x = input_image.astype(np.float32)
         g = cv2.GaussianBlur(x, (0, 0), gaussian_sigma)
         intensity = np.min(g - x, axis=2).clip(0, 255)
@@ -277,10 +321,10 @@ class StylizedLayeredImageObject:
         return detected_map
 
     def generate_canny(self, input_image, low_threshold=100, high_threshold=200, detect_resolution=0, upscale_method="INTER_CUBIC"):
-        self.logger.debug("Generating canny edges.")
         input_image, _ = self.common_input_validate(input_image, "np")
         input_image, remove_pad = self.resize_image_with_pad(input_image, detect_resolution, upscale_method)
 
+        print(f"Generating Canny edges with params: low_threshold={low_threshold}, high_threshold={high_threshold}, detect_resolution={detect_resolution}")
         gray_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray_image, low_threshold, high_threshold)
         detected_map = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
@@ -303,7 +347,6 @@ class StylizedLayeredImageObject:
                 output_type = "pil"
 
         if input_image is None:
-            self.logger.error("input_image must be defined.")
             raise ValueError("input_image must be defined.")
 
         if not isinstance(input_image, np.ndarray):
@@ -356,98 +399,145 @@ class StylizedLayeredImageObject:
         return (64 - x % 64) % 64
 
     def overlay_logo(self, background, logo, x2, y2, alpha=1.0, original_width=None, original_height=None):
+        """
+        Overlays the processed logo onto the background image.
+
+        Parameters:
+        - background (np.ndarray): The background image (BGR).
+        - logo (np.ndarray): The processed logo image with alpha channel (BGRA).
+        - x2, y2 (int): Coordinates for placing the bottom-right corner of the logo.
+        - alpha (float): Overall transparency factor for the logo.
+        - original_width, original_height (int): Original size of the logo before processing.
+
+        Returns:
+        - combined_img (np.ndarray): The background image with the logo overlaid.
+        """
         logo_height, logo_width = logo.shape[:2]
         x1, y1 = x2 - logo_width, y2 - logo_height
 
-        self.logger.debug(f"Logo dimensions: width={logo_width}, height={logo_height}")
-        self.logger.debug(f"Initial placement coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+        print(f"Logo dimensions: width={logo_width}, height={logo_height}")
+        print(f"Initial placement coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
 
+        # Ensure coordinates are within the background bounds
         x1 = max(0, x1)
         y1 = max(0, y1)
         x2 = min(background.shape[1], x2)
         y2 = min(background.shape[0], y2)
 
         if x2 <= x1 or y2 <= y1:
-            self.logger.warning("Logo position adjusted outside background dimensions. Skipping overlay.")
+            print("Warning: After adjustment, x2 must be greater than x1 and y2 must be greater than y1. Skipping overlay.")
             return background
 
-        self.logger.debug(f"Adjusted placement coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+        print(f"Adjusted placement coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
 
         roi_width = x2 - x1
         roi_height = y2 - y1
-        self.logger.debug(f"Calculated ROI dimensions: width={roi_width}, height={roi_height}")
+        print(f"Calculated ROI dimensions: width={roi_width}, height={roi_height}")
 
+        # Resize logo if it exceeds the ROI
         if logo_width > roi_width or logo_height > roi_height:
-            self.logger.info(f"Resizing logo from ({logo_width}, {logo_height}) to fit within ROI ({roi_width}, {roi_height})")
+            print(f"Resizing logo from ({logo_width}, {logo_height}) to fit within ROI ({roi_width}, {roi_height})")
             logo = cv2.resize(logo, (roi_width, roi_height), interpolation=cv2.INTER_AREA)
             logo_height, logo_width = logo.shape[:2]
-            self.logger.debug(f"Resized logo dimensions: width={logo_width}, height={logo_height}")
+            print(f"Resized logo dimensions: width={logo_width}, height={logo_height}")
 
+        # Extract ROI from background
         roi = background[y1:y2, x1:x2].astype(np.float32)
 
+        # Ensure logo is in BGRA format
         if logo.shape[2] == 4:
+            # Separate BGR and Alpha
             logo_bgr = logo[:, :, :3].astype(np.float32)
-            logo_alpha_channel = (logo[:, :, 3] / 255.0) * alpha
+            logo_alpha_channel = (logo[:, :, 3] / 255.0) * alpha  # Scale alpha
             logo_alpha = cv2.merge([logo_alpha_channel, logo_alpha_channel, logo_alpha_channel])
         else:
+            # No alpha channel, create mask from intensity
             logo_bgr = logo[:, :, :3].astype(np.float32)
             logo_gray = cv2.cvtColor(logo_bgr.astype(np.uint8), cv2.COLOR_BGR2GRAY)
             logo_mask = (logo_gray > 0).astype(np.float32) * alpha
             logo_alpha = cv2.merge([logo_mask, logo_mask, logo_mask])
 
+        # Debug shapes
+        print(f"roi shape: {roi.shape}")
+        print(f"logo_bgr shape: {logo_bgr.shape}")
+        print(f"logo_alpha shape: {logo_alpha.shape}")
+
+        # Perform alpha blending
         blended_roi = logo_bgr * logo_alpha + roi * (1 - logo_alpha)
         blended_roi = np.clip(blended_roi, 0, 255).astype(np.uint8)
 
+        # Combine back into the background
         combined_img = background.copy()
         combined_img[y1:y2, x1:x2] = blended_roi
         return combined_img
 
     def generate_depth_anything(self):
+        """
+        Generate depth maps for the background and each logo using the Depth-Anything-V2 model.
+        This method should be called after processing images.
+        """
         if not self.depth_model:
-            self.logger.error("Depth model not loaded. Cannot generate depth.")
-            raise ValueError("Depth model not loaded.")
+            raise ValueError("Depth model not loaded. Provide a valid model checkpoint during initialization.")
 
+        # 1. Generate depth for background if it was processed with 'depth_anth'
         background_method = self.layered_image_obj.background.get('method', 'none') if isinstance(self.layered_image_obj.background, dict) else 'none'
         if background_method == 'depth_anth':
-            self.logger.info("Generating depth for background...")
+            print("Generating depth for background...")
             background_bgr = cv2.cvtColor(self.background, cv2.COLOR_BGRA2BGR) if self.background.shape[2] == 4 else self.background.copy()
             self.background_depth = self.depth_model.infer_image(background_bgr)
-            self.logger.info("Depth generation for background complete.")
+            print("Depth generation for background complete.")
         else:
             self.background_depth = None
 
+        # 2. Generate depth for each logo if processed with 'depth_anth'
         for idx, logo_info in enumerate(self.processed_logos):
             logo_method = self.layered_image_obj.logos[idx].get('method', 'none') if isinstance(self.layered_image_obj.logos[idx], dict) else 'none'
             if logo_method == 'depth_anth':
-                self.logger.info(f"Generating depth for logo {idx}...")
+                print(f"Generating depth for logo {idx}...")
                 logo_rgba = logo_info['image']
                 logo_bgr = cv2.cvtColor(logo_rgba, cv2.COLOR_BGRA2BGR) if logo_rgba.shape[2] == 4 else logo_rgba.copy()
                 depth_map = self.depth_model.infer_image(logo_bgr)
 
+                # Apply alpha mask to depth_map to isolate logo area
                 if logo_rgba.shape[2] == 4:
                     mask = (logo_rgba[:, :, 3] > 0).astype(np.float32)
                     depth_map = depth_map * mask
 
                 self.processed_logos[idx]['depth_map'] = depth_map
-                self.logger.info(f"Depth generation for logo {idx} complete.")
+                print(f"Depth generation for logo {idx} complete.")
             else:
                 self.processed_logos[idx]['depth_map'] = None
 
     def render(self):
+        """
+        Renders the final combined image by overlaying all processed logos onto the background.
+        """
         combined_img = self.background.copy()
 
+        # Overlay processed logos
         for logo_info in self.processed_logos:
             logo = logo_info['image']
             x2, y2 = logo_info['coords']
             alpha = logo_info['alpha']
             original_width, original_height = logo_info['original_size']
-            self.logger.debug(f"Overlaying logo at coordinates: ({x2}, {y2}) with alpha: {alpha}")
-            combined_img = self.overlay_logo(combined_img, logo, x2, y2, alpha, original_width, original_height)
+            print(f"Overlaying logo at coordinates: ({x2}, {y2}) with alpha: {alpha}")
+            combined_img = self.overlay_logo(
+                combined_img, logo, x2, y2, alpha, original_width, original_height
+            )
 
+        # Apply final processing (e.g., mask generation)
         combined_img = self.final_post_processing(combined_img)
+
         return combined_img
 
+
     def final_post_processing(self, combined_img):
+        """
+        Applies final processing steps to the combined image based on final_processing_params.
+        Currently supports:
+        - 'method': 'none' or 'threshold'
+        - 'threshold_value': int for thresholding if method='threshold'
+        """
         method = self.final_processing_params.get('method', 'none')
         if method == 'none':
             return combined_img
@@ -458,10 +548,15 @@ class StylizedLayeredImageObject:
             mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             return mask_bgr
         else:
-            self.logger.error(f"Unknown final processing method: {method}")
             raise ValueError(f"Unknown final processing method: {method}")
 
     def visualize_with_grid(self, title="Combined Image with Logos and Coordinate Grid"):
+        """
+        Visualizes the combined image with a coordinate grid.
+
+        Parameters:
+        - title (str): Title for the plot.
+        """
         combined_image = self.render()
         combined_rgb = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
 
@@ -482,13 +577,21 @@ class StylizedLayeredImageObject:
         plt.show()
 
     def save_combined_image(self, filepath):
+        """
+        Parameters:
+        - filepath (str): Path to save the image.
+        - alpha (float): Transparency factor (not used here).
+        """
         combined_image = self.render()
-        self.logger.info("Combined image rendered.")
+        print("Combined image rendered.")
 
+        # If the image has 4 channels (BGRA), convert to RGBA
         if combined_image.shape[2] == 4:
             combined_image = cv2.cvtColor(combined_image, cv2.COLOR_BGRA2RGBA)
+        # If the image has 3 channels (BGR), convert to RGB
         elif combined_image.shape[2] == 3:
             combined_image = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
 
-        Image.fromarray(combined_image).save(filepath)
-        self.logger.info(f"Combined image saved to {filepath}")
+        # Save the image using OpenCV (which now has the correct channel order)
+        Image.fromarray(combined_image).save(filepath)#
+        print(f"Combined image saved to {filepath}")

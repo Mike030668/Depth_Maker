@@ -27,17 +27,22 @@ class LogoOverlayPipeline:
                  combined_image_path=r'results\combined_image.png', bg_color=(0, 0, 0),
                  threshold=10, layered_image=None, background_size=None,
                  enable_logging=True):
-        
-        # Initialize logging
-        self.logger = logging.getLogger(self.__class__.__name__)
 
         # Use pathlib for cross-platform path handling
         self.dir_path = Path(dir_path) if dir_path else None
         self.combined_image_path = self.dir_path / Path(combined_image_path) if dir_path else Path(combined_image_path)
         self.bg_color = bg_color
         self.threshold = threshold
+        
+
+        # Initialize logging
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.enable_logging_flag = enable_logging
 
+        if enable_logging:
+            self.enable_logging_method()
+        else:
+            self.disable_logging_method()
 
 
         if layered_image:
@@ -68,8 +73,8 @@ class LogoOverlayPipeline:
         Parameters:
         - log_level (int): Уровень логирования (например, logging.INFO, logging.DEBUG).
         """
-        setup_logging(log_level=log_level, enable_logging=True)
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(log_level)
+        self.logger.disabled = False
         self.enable_logging_flag = True
         self.logger.info("Логирование включено.")
 
@@ -77,10 +82,9 @@ class LogoOverlayPipeline:
         """
         Отключает логирование.
         """
-        setup_logging(enable_logging=False)
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.disabled = True
         self.enable_logging_flag = False
-        self.logger.warning("Логирование отключено.")
+        print("Логирование отключено.")
 
 
     def create_test_logo(self, filename='test_logo.png', size=(200, 200), color=(255, 255, 255)):
