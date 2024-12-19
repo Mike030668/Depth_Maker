@@ -225,8 +225,7 @@ class LogoOverlayPipeline:
         #    raise
 
 
-    @staticmethod
-    def visualize_with_grid(combined_image):
+    def visualize_with_grid(self, combined_image, figsize=(14, 9)):
         """
         Visualizes the original background and the combined image with logos, with a coordinate grid overlay.
 
@@ -235,14 +234,14 @@ class LogoOverlayPipeline:
         """
         combined_rgb = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
 
-        fig, ax = plt.subplots(figsize=(12, 8))
+        fig, ax = plt.subplots(figsize=figsize)
         ax.imshow(combined_rgb)
         ax.set_title('Combined Image with Logos and Coordinate Grid')
         ax.axis('on')
 
         # Draw grid lines
         height, width = combined_image.shape[:2]
-        step_size = 50  # Set the distance between grid lines
+        step_size = 25  # Set the distance between grid lines
 
         # Draw vertical lines
         for x in range(0, width, step_size):
@@ -250,6 +249,17 @@ class LogoOverlayPipeline:
         # Draw horizontal lines
         for y in range(0, height, step_size):
             ax.axhline(y=y, color='red', linestyle='--', linewidth=0.5)
+
+        # Предполагается, что  есть self.logos_info с данными по объектам
+        for i, logo_info in enumerate(self.logos_info):
+            x2, y2 = logo_info['point']
+            # Отрисовать кружок
+            ax.plot(x2, y2, marker='o', markersize=5, color='blue')
+            # Отрисовать текст с номером объекта рядом с точкой
+            ax.text(x2 + 2, y2 + 1, str(i+1), color='blue', fontsize=12, backgroundcolor='white')
+            # Отрисовать пунктирные линии от точки до осей
+            ax.axhline(y=y2, color='blue', linestyle=':', linewidth=1.5)
+            ax.axvline(x=x2, color='blue', linestyle=':', linewidth=1.5)
 
         plt.tight_layout()
         plt.show()

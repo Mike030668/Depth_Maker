@@ -64,8 +64,14 @@ def download_model(url: str, save_path: str):
 
     Parameters:
         url (str): The URL to download the model from.
-        save_path (str): The local path where the model will be saved.
+        save_path (str): The local path where the model will be saved
     """
+    
+    if os.path.exists(save_path):
+        logging.info(f"Model checkpoint already exists at {save_path}. Skipping download.")
+        return
+
+
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()

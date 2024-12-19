@@ -97,6 +97,19 @@ class StylizedLayeredImageObject:
         print("Логирование отключено.")
 
     def load_depth_model(self, checkpoint_path: str, encoder='vitl', device: str = "cuda" if torch.cuda.is_available() else "cpu") -> DepthAnythingV2:
+        """
+        Load the Depth-Anything-V2 model.
+
+        Parameters:
+        - checkpoint_path (str): Path to the model checkpoint.
+        - encoder (str): Encoder type.
+        - device (str): Device to load the model on.
+
+        Returns:
+        - model (DepthAnythingV2): Loaded depth model.
+        """     
+        
+        
         model_configs = {
             'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
             'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
@@ -118,22 +131,41 @@ class StylizedLayeredImageObject:
         return model
 
     def process_image(self, image, params, is_background=False):
+        """
+        Process a single image (background or logo) according to the specified parameters.
+        Steps:
+        - Extract original alpha if present.
+        - Apply chosen method (none, lineart, canny, depth_anth).
+        - Apply brightness/contrast (for non-depth methods or after depth colormap).
+        - Reintroduce alpha channel (for lineart/canny/depth_anth, via a thresholded mask or existing alpha).
+        - If logo (not background), apply rotation if specified.
+        - Apply reflection if specified.
+        - For 'depth_anth' method, replace image with depth colormap and apply brightness/contrast.
+
+        Returns:
+        - processed_rgba (np.ndarray): The processed image (either stylized or depth colormap).
+        - depth_map (np.ndarray or None): The depth map if 'depth_anth' is specified, else None.
+        """
         method = params.get('method', 'none')
         brightness = params.get('brightness', 0)
         contrast = params.get('contrast', 1.0)
         rotation_angle = params.get('rotation_angle', 0)
         reflection = params.get('reflection', 'none')
 
+        # Check if original image has an alpha channel
         original_has_alpha = (image.shape[2] == 4)
         if original_has_alpha:
+            # Extract original alpha
             b, g, r, original_alpha = cv2.split(image)
             original_rgb = cv2.merge((b, g, r))
         else:
             original_rgb = image
             original_alpha = None
 
+        # Initialize depth_map
         depth_map = None
 
+        # 1. Apply chosen method
         if method == 'none':
             processed = original_rgb.copy()
         elif method == 'lineart':
@@ -155,65 +187,72 @@ class StylizedLayeredImageObject:
                 upscale_method=params.get('upscale_method', 'INTER_CUBIC')
             )
         elif method == 'depth_anth':
+            # For depth_anth, generate depth map and replace image with depth colormap
             if not self.depth_model:
                 self.logger.error("Depth model not loaded. Can't apply 'depth_anth'.")
                 raise ValueError("Depth model not loaded.")
             self.logger.info("Generating depth map...")
+            # Ensure the image is in RGB for the depth model
             depth_input = cv2.cvtColor(original_rgb, cv2.COLOR_BGR2RGB)
             depth_map = self.depth_model.infer_image(depth_input)
             self.logger.info("Depth map generation complete.")
 
+            # Normalize the depth map to 0-255
             depth_norm = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min() + 1e-5) * 255
             depth_norm = depth_norm.astype(np.uint8)
+            # Apply brightness and contrast adjustments to the normalized depth map
             depth_norm = self.apply_brightness_contrast(depth_norm, brightness=brightness, contrast=contrast)
-
+            # Apply color map for visualization
             depth_colormap = cv2.applyColorMap(depth_norm, cv2.COLORMAP_MAGMA)
 
+            # If original image had alpha, retain it; else, create full opacity
             if original_has_alpha:
                 depth_rgba = cv2.merge((depth_colormap, original_alpha))
             else:
                 depth_rgba = cv2.cvtColor(depth_colormap, cv2.COLOR_BGR2BGRA)
-                depth_rgba[:, :, 3] = 255
-            processed = depth_rgba
+                depth_rgba[:, :, 3] = 255 # Set alpha to fully opaque
+            processed = depth_rgba 
         else:
             self.logger.error(f"Unknown processing method: {method}")
             raise ValueError(f"Unknown processing method: {method}")
 
+        # 2. Apply brightness and contrast (if not 'depth_anth' as depth_colormap is already adjusted)
         if method != 'depth_anth':
             processed = self.apply_brightness_contrast(processed, brightness=brightness, contrast=contrast)
-
+        
+        # 3. Reintroduce alpha channel for non-depth methods
         if method != 'depth_anth':
             if method == 'none' and original_has_alpha:
+                # Just reattach original alpha, resize if dimensions changed
                 if processed.shape[:2] != original_alpha.shape[:2]:
                     original_alpha = cv2.resize(original_alpha, (processed.shape[1], processed.shape[0]), interpolation=cv2.INTER_AREA)
                 rgba = cv2.merge((processed[:, :, 0], processed[:, :, 1], processed[:, :, 2], original_alpha))
             else:
                 if method in ['lineart', 'canny']:
-                    gray = cv2.cvtColor(processed, cv2.COLOR_BGR2GRAY)
+                    # For lineart/canny: create a binary mask or use existing original_rgb alpha
+                    gray = cv2.cvtColor(original_rgb, cv2.COLOR_BGR2GRAY)
                     _, mask = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY)
                 elif method == 'depth_anth':
+                   # Already handled above
                     mask = None
 
                 if method in ['lineart', 'canny']:
                     if original_has_alpha:
+                        # Combine mask with original_alpha
                         if original_alpha.shape[:2] != processed.shape[:2]:
                             original_alpha = cv2.resize(original_alpha, (processed.shape[1], processed.shape[0]), interpolation=cv2.INTER_AREA)
                         combined_alpha = cv2.bitwise_and(original_alpha, mask)
                     else:
+                        # No original alpha, use mask as alpha
                         combined_alpha = mask
                     rgba = cv2.merge((processed[:, :, 0], processed[:, :, 1], processed[:, :, 2], combined_alpha))
+                
                 else:
                     rgba = processed.copy()
-
-        #    if not is_background and rotation_angle != 0:
-        #       rgba = self.rotate_rgba(rgba, rotation_angle)
-
-        #   if reflection != 'none':
-        #       rgba = self.reflect_image(rgba, reflection)
         else:
             rgba = processed
             
-        # После того, как вы установили rgba, вынесите логику вращения и отражения вне зависимости от метода:
+        # apply rotate_rgba and reflect_image
         if not is_background and rotation_angle != 0:
             rgba = self.rotate_rgba(rgba, rotation_angle)
 
@@ -222,7 +261,23 @@ class StylizedLayeredImageObject:
         
         return rgba, depth_map
 
+
+        
+        return rgba, depth_map
+
     def rotate_rgba(self, rgba_image, angle):
+
+        """
+        Rotates the given RGBA image around its center by the specified angle.
+
+        Parameters:
+        - rgba_image (np.ndarray): RGBA image to rotate.
+        - angle (float): Angle in degrees. Positive values rotate counterclockwise.
+
+        Returns:
+        - rotated (np.ndarray): Rotated RGBA image.
+        """
+
         (h, w) = rgba_image.shape[:2]
         center = (w // 2, h // 2)
         M = cv2.getRotationMatrix2D(center, angle, 1.0)
@@ -232,7 +287,7 @@ class StylizedLayeredImageObject:
         new_h = int((h * cos) + (w * sin))
         M[0, 2] += (new_w / 2) - center[0]
         M[1, 2] += (new_h / 2) - center[1]
-
+        # Rotate with BORDER_CONSTANT and a transparent (0,0,0,0) background
         rotated = cv2.warpAffine(
             rgba_image,
             M,
@@ -244,7 +299,15 @@ class StylizedLayeredImageObject:
         self.logger.debug(f"Rotated image by {angle} degrees.")
         return rotated
 
+
     def reflect_image(self, rgba_image, mode):
+        """
+        Reflects the given RGBA image according to the mode:
+        - 'horizontal': reflect left-right
+        - 'vertical': reflect top-bottom
+        - 'both': reflect both horizontally and vertically
+        - 'none': no reflection
+        """
         if mode == 'horizontal':
             self.logger.debug("Reflecting image horizontally.")
             return cv2.flip(rgba_image, 1)
@@ -257,6 +320,12 @@ class StylizedLayeredImageObject:
         return rgba_image
 
     def apply_brightness_contrast(self, image, brightness=0, contrast=1.0):
+        """
+        Adjusts brightness and contrast of the given image.
+
+        brightness: int, positive to brighten, negative to darken
+        contrast: float, >1.0 increases contrast, between 0 and 1 decreases contrast, 1.0 no change
+        """
         img_float = image.astype(np.float32)
         img_float = img_float * contrast + brightness
         img_float = np.clip(img_float, 0, 255).astype(np.uint8)
@@ -360,16 +429,32 @@ class StylizedLayeredImageObject:
             y = y.clip(0, 255).astype(np.uint8)
             return y
 
+
     def pad64(self, x):
         return (64 - x % 64) % 64
 
+
     def overlay_logo(self, background, logo, x2, y2, alpha=1.0, original_width=None, original_height=None):
+        """
+        Overlays the processed logo onto the background image.
+
+        Parameters:
+        - background (np.ndarray): The background image (BGR).
+        - logo (np.ndarray): The processed logo image with alpha channel (BGRA).
+        - x2, y2 (int): Coordinates for placing the bottom-right corner of the logo.
+        - alpha (float): Overall transparency factor for the logo.
+        - original_width, original_height (int): Original size of the logo before processing.
+
+        Returns:
+        - combined_img (np.ndarray): The background image with the logo overlaid.
+        """
+        
         logo_height, logo_width = logo.shape[:2]
         x1, y1 = x2 - logo_width, y2 - logo_height
 
         self.logger.debug(f"Logo dimensions: width={logo_width}, height={logo_height}")
         self.logger.debug(f"Initial placement coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
-
+        # Ensure coordinates are within the background bounds
         x1 = max(0, x1)
         y1 = max(0, y1)
         x2 = min(background.shape[1], x2)
@@ -410,11 +495,16 @@ class StylizedLayeredImageObject:
         combined_img[y1:y2, x1:x2] = blended_roi
         return combined_img
 
+
     def generate_depth_anything(self):
+        """
+        Generate depth maps for the background and each logo using the Depth-Anything-V2 model.
+        This method should be called after processing images.
+        """
         if not self.depth_model:
             self.logger.error("Depth model not loaded. Cannot generate depth.")
             raise ValueError("Depth model not loaded.")
-
+        # 1. Generate depth for background if it was processed with 'depth_anth'
         background_method = self.layered_image_obj.background.get('method', 'none') if isinstance(self.layered_image_obj.background, dict) else 'none'
         if background_method == 'depth_anth':
             self.logger.info("Generating depth for background...")
@@ -423,7 +513,7 @@ class StylizedLayeredImageObject:
             self.logger.info("Depth generation for background complete.")
         else:
             self.background_depth = None
-
+        # 2. Generate depth for each logo if processed with 'depth_anth'
         for idx, logo_info in enumerate(self.processed_logos):
             logo_method = self.layered_image_obj.logos[idx].get('method', 'none') if isinstance(self.layered_image_obj.logos[idx], dict) else 'none'
             if logo_method == 'depth_anth':
@@ -441,9 +531,13 @@ class StylizedLayeredImageObject:
             else:
                 self.processed_logos[idx]['depth_map'] = None
 
-    def render(self):
-        combined_img = self.background.copy()
 
+    def render(self):
+        """
+        Renders the final combined image by overlaying all processed logos onto the background.
+        """
+        combined_img = self.background.copy()
+        # Overlay processed logos
         for logo_info in self.processed_logos:
             logo = logo_info['image']
             x2, y2 = logo_info['coords']
@@ -451,11 +545,19 @@ class StylizedLayeredImageObject:
             original_width, original_height = logo_info['original_size']
             self.logger.debug(f"Overlaying logo at coordinates: ({x2}, {y2}) with alpha: {alpha}")
             combined_img = self.overlay_logo(combined_img, logo, x2, y2, alpha, original_width, original_height)
-
+        # Overlay processed logos
         combined_img = self.final_post_processing(combined_img)
         return combined_img
 
+
     def final_post_processing(self, combined_img):
+        """
+        Applies final processing steps to the combined image based on final_processing_params.
+        Currently supports:
+        - 'method': 'none' or 'threshold'
+        - 'threshold_value': int for thresholding if method='threshold'
+        """
+
         method = self.final_processing_params.get('method', 'none')
         if method == 'none':
             return combined_img
@@ -469,14 +571,41 @@ class StylizedLayeredImageObject:
             self.logger.error(f"Unknown final processing method: {method}")
             raise ValueError(f"Unknown final processing method: {method}")
 
-    def visualize_with_grid(self, title="Combined Image with Logos and Coordinate Grid"):
-        combined_image = self.render()
-        combined_rgb = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
 
-        fig, ax = plt.subplots(figsize=(12, 8))
-        ax.imshow(combined_rgb)
+    def visualize_with_grid(self, figsize=(14, 9), mode='depth', title="Combined Image with Logos and Coordinate Grid"):
+        """
+        Visualizes the combined image with a coordinate grid.
+
+        Parameters:
+        - title (str): Title for the plot.
+        """
+        combined_image = self.render()
+
+        # Проверяем каналы изображения
+        if combined_image.shape[2] == 4:
+            # RGBA для matplotlib
+            display_image = cv2.cvtColor(combined_image, cv2.COLOR_BGRA2RGBA)
+        else:
+            # RGB для matplotlib
+            display_image = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
+
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        if mode == 'depth':
+            # Преобразуем в градации серого, затем применяем цветовую карту magma
+            gray_image = cv2.cvtColor(display_image, cv2.COLOR_RGBA2GRAY) if display_image.shape[2] == 4 else cv2.cvtColor(display_image, cv2.COLOR_RGB2GRAY)
+            im = ax.imshow(gray_image, cmap='magma')
+            plt.colorbar(im, ax=ax)
+        elif mode == 'gray':
+            # Отображаем в градациях серого без colorbar
+            gray_image = cv2.cvtColor(display_image, cv2.COLOR_RGBA2GRAY) if display_image.shape[2] == 4 else cv2.cvtColor(display_image, cv2.COLOR_RGB2GRAY)
+            ax.imshow(gray_image, cmap='gray')
+        else:
+            # По умолчанию отображаем в цвете, как раньше
+            ax.imshow(display_image)
+        
         ax.set_title(title)
-        ax.axis('on')
+        ax.axis('off')
 
         height, width = combined_image.shape[:2]
         step_size = 50
@@ -485,19 +614,27 @@ class StylizedLayeredImageObject:
             ax.axvline(x=x, color='red', linestyle='--', linewidth=0.5)
         for y in range(0, height, step_size):
             ax.axhline(y=y, color='red', linestyle='--', linewidth=0.5)
-
+        
         plt.tight_layout()
         plt.show()
 
+
     def save_combined_image(self, filepath):
+        """
+        Parameters:
+        - filepath (str): Path to save the image.
+        - alpha (float): Transparency factor (not used here).
+        """
         combined_image = self.render()
         self.logger.info("Combined image rendered.")
 
+        # If the image has 4 channels (BGRA), convert to RGBA
         if combined_image.shape[2] == 4:
             combined_image = cv2.cvtColor(combined_image, cv2.COLOR_BGRA2RGBA)
+        # If the image has 3 channels (BGR), convert to RGB
         elif combined_image.shape[2] == 3:
             combined_image = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
-
+        # save
         Image.fromarray(combined_image).save(filepath)
         self.logger.info(f"Combined image saved to {filepath}")
 
