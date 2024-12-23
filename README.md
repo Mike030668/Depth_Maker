@@ -38,3 +38,26 @@ Depth_Maker/
 │   └── test_utils.py
 └── notebooks/
     └── usage_examples.ipynb  # Future: Jupyter notebooks for showcasing usage
+
+
+
+# Depth_Maker
+### Steps
+
+1. **Update the package list**
+
+   Open your terminal and run:
+
+   ```bash
+   sudo apt-get update
+   python -m pip install --upgrade pip
+
+2. Clone the Depth_Maker repository from GitHub:
+   ```bash
+   git clone https://github.com/Mike030668/Depth_Maker.git
+   cd Depth_Maker
+   pip install -r requirements.txt
+
+
+
+
