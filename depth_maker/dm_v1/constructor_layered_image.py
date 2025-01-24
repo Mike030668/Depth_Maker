@@ -1,15 +1,12 @@
 # depth_maker/depth_maker_v1/constructor_layered_image.py
 
 from .utils import (
-    resize_image,
+    visualize_with_grid,
+    load_image,
     add_alpha_channel,
-    rotate_image,
-    reflect_image,
-    save_image,
     ensure_directory,
-    display_image,
     setup_logging,
-    load_image  
+    save_image,
 )
 
 import cv2
@@ -26,24 +23,27 @@ class LogoOverlayPipeline:
     def __init__(self, dir_path=None, background_filename=None, logos_info=None,
                  combined_image_path=r'results\combined_image.png', bg_color=(0, 0, 0),
                  threshold=10, layered_image=None, background_size=None,
-                 enable_logging=True):
+                 resize_by="width", enable_logging=True):
+        """
+        Initialize the pipeline for overlaying logos on a background.
 
+        Parameters:
+        - resize_by (str): Dimension to resize by ("width" or "height").
+        """
         # Use pathlib for cross-platform path handling
         self.dir_path = Path(dir_path) if dir_path else None
         self.combined_image_path = self.dir_path / Path(combined_image_path) if dir_path else Path(combined_image_path)
         self.bg_color = bg_color
         self.threshold = threshold
-        
+        self.resize_by = resize_by  # Save the resize_by argument
+        self.enable_logging_flag = enable_logging
 
         # Initialize logging
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.enable_logging_flag = enable_logging
-
         if enable_logging:
             self.enable_logging_method()
         else:
             self.disable_logging_method()
-
 
         if layered_image:
             # Initialize from a layered image object
@@ -62,8 +62,9 @@ class LogoOverlayPipeline:
             # Load the background image using the utility function
             self.background = load_image(full_background_path, cv2.IMREAD_COLOR)
             if background_size:
-                self.background = self.resize_logo(self.background, background_size[0], background_size[1])
+                self.background = self.resize_logo(self.background, background_size, resize_by=self.resize_by)
             self.background_height, self.background_width = self.background.shape[:2]
+
 
 
     def enable_logging_method(self, log_level=logging.INFO):
@@ -160,110 +161,152 @@ class LogoOverlayPipeline:
         return cropped_logo
 
 
-    def resize_logo(self, logo, target_width, target_height):
+    def resize_logo(self, logo, target_size, resize_by="width"):
         """
-        Resizes the logo to fit within the specified dimensions while maintaining aspect ratio.
-
-        Parameters:
-        - logo (np.ndarray): Logo image with or without alpha channel.
-        - target_width (int): Desired width for the logo.
-        - target_height (int): Desired height for the logo.
-
-        Returns:
-        - logo_resized (np.ndarray): Resized logo image with proper alpha channel.
+        Resizes the logo while maintaining aspect ratio.
         """
         logo = self.crop_logo(logo)  # Crop the logo to remove unnecessary background
-
+    
+        original_height, original_width = logo.shape[:2]
+        if resize_by == "width":
+            scale = target_size / original_width
+            new_size = (target_size, int(original_height * scale))
+        elif resize_by == "height":
+            scale = target_size / original_height
+            new_size = (int(original_width * scale), target_size)
+        else:
+            self.logger.error("resize_by must be 'width' or 'height'.")
+            raise ValueError("resize_by must be 'width' or 'height'.")
+    
         logo_pil = Image.fromarray(logo)
         try:
-            logo_resized_pil = logo_pil.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            logo_resized_pil = logo_pil.resize(new_size, Image.Resampling.LANCZOS)
         except AttributeError:
-            logo_resized_pil = logo_pil.resize((target_width, target_height), Image.ANTIALIAS)
+            logo_resized_pil = logo_pil.resize(new_size, Image.ANTIALIAS)
+    
+        # Return only the resized logo
+        return np.array(logo_resized_pil)
 
-        logo_resized = np.array(logo_resized_pil)
-        return logo_resized
 
+    def rotate_logo(self, logo, angle):
+        """
+        Rotates the given logo (RGBA) image around its center by the specified angle.
+    
+        Parameters:
+        - logo (np.ndarray): RGBA logo image to rotate.
+        - angle (float): Angle in degrees. Positive values rotate counterclockwise.
+    
+        Returns:
+        - rotated_logo (np.ndarray): Rotated RGBA logo image.
+        """
+        (h, w) = logo.shape[:2]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    
+        # Calculate the new bounding box dimensions
+        cos = np.abs(M[0, 0])
+        sin = np.abs(M[0, 1])
+        new_w = int((h * sin) + (w * cos))
+        new_h = int((h * cos) + (w * sin))
+    
+        # Adjust the rotation matrix to account for translation
+        M[0, 2] += (new_w / 2) - center[0]
+        M[1, 2] += (new_h / 2) - center[1]
+    
+        # Perform the rotation with a transparent border
+        rotated_logo = cv2.warpAffine(
+            logo,
+            M,
+            (new_w, new_h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(0, 0, 0, 0)  # Transparent background
+        )
+        return rotated_logo
+        
+    def reflect_logo(self, logo, mode):
+        """
+        Reflects the given RGBA logo image according to the specified mode.
+    
+        Parameters:
+        - logo (np.ndarray): RGBA logo image to reflect.
+        - mode (str): Reflection mode ('horizontal', 'vertical', 'both', 'none').
+    
+        Returns:
+        - reflected_logo (np.ndarray): Reflected RGBA logo image.
+        """
+        if mode == 'horizontal':
+            self.logger.debug("Reflecting logo horizontally.")
+            return cv2.flip(logo, 1)
+        elif mode == 'vertical':
+            self.logger.debug("Reflecting logo vertically.")
+            return cv2.flip(logo, 0)
+        elif mode == 'both':
+            self.logger.debug("Reflecting logo both horizontally and vertically.")
+            return cv2.flip(logo, -1)
+        else:
+            self.logger.debug("No reflection applied to the logo.")
+            return logo
+
+    
     def overlay_multiple_logos(self):
         """
         Overlays multiple logos onto a background image and creates a layered image object.
-
+    
         Returns:
         - LayeredImageObject: The layered image object containing background and logos.
         """
         layered_image = LayeredImageObject(self.background)
-
+    
         for logo_info in self.logos_info:
             logo_path = os.path.join(self.dir_path, logo_info['filename'])
             logo = load_image(logo_path, cv2.IMREAD_UNCHANGED)
-            target_width, target_height = logo_info['sizes']
-            logo = self.resize_logo(logo, target_width, target_height)
-
+    
+            # Resize logo before adding it
+            target_size = logo_info['sizes']  # Получаем размер из `logo_info`
+            resize_by = logo_info.get('resize_by', "width")  # Определяем, по какой стороне менять размеры
+            logo = self.resize_logo(logo, target_size, resize_by=resize_by)  # Здесь изменяем размеры
+    
             # Prepare the alpha channel for the logo
             logo = self.prepare_logo_alpha(logo)
-
+    
+            # Apply rotation if specified
+            rotation_angle = logo_info.get('rotation_angle', 0)  # Угол поворота
+            if rotation_angle != 0:
+                logo = self.rotate_logo(logo, rotation_angle)
+    
+            # Apply reflection if specified
+            reflection = logo_info.get('reflection', 'none')  # Отражение (horizontal, vertical, both, none)
+            if reflection != 'none':
+                logo = self.reflect_logo(logo, reflection)
+    
+            # Extract coordinates and alpha
             x2, y2 = logo_info['point']
             alpha = logo_info.get('alpha', 1.0)
-
+    
+            # Добавляем обработанный логотип в LayeredImageObject
             layered_image.add_logo(logo, x2, y2, alpha)
-
+    
         return layered_image
+
+
 
 
     def save_combined_image(self, layered_image):
         """
-        Saves the final combined image by rendering all layers.
-        Utilizes the utility function `save_image`.
+        Сохраняет финальное изображение с обрезкой до размеров фона.
         """
-        #try:
-        combined_image = layered_image.render()
-        #ensure_directory(self.combined_image_path.parent)
+        combined_image = layered_image.render(crop_to_background=True)
+        ensure_directory(self.combined_image_path.parent)
         save_image(combined_image, self.combined_image_path)
         self.logger.info(f"Combined image saved to {self.combined_image_path}.")
-        #except Exception as e:
-         #   self.logger.error(f"Failed to save combined image to {self.combined_image_path}. Error: {e}")
-        #    print(f"Failed to save combined image to {self.combined_image_path}. Error: {e}")
-        #    raise
 
-
-    def visualize_with_grid(self, combined_image, figsize=(14, 9)):
+    def visualize_with_grid(self, combined_image, figsize=(14, 9), mode='color', title="Combined Image with Logos and Coordinate Grid"):
         """
-        Visualizes the original background and the combined image with logos, with a coordinate grid overlay.
-
-        Parameters:
-        - combined_image (np.ndarray): Background image with the logos overlayed.
+        Визуализирует изображение с сеткой и логотипами.
         """
-        combined_rgb = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
-
-        fig, ax = plt.subplots(figsize=figsize)
-        ax.imshow(combined_rgb)
-        ax.set_title('Combined Image with Logos and Coordinate Grid')
-        ax.axis('on')
-
-        # Draw grid lines
-        height, width = combined_image.shape[:2]
-        step_size = 25  # Set the distance between grid lines
-
-        # Draw vertical lines
-        for x in range(0, width, step_size):
-            ax.axvline(x=x, color='red', linestyle='--', linewidth=0.5)
-        # Draw horizontal lines
-        for y in range(0, height, step_size):
-            ax.axhline(y=y, color='red', linestyle='--', linewidth=0.5)
-
-        # Предполагается, что  есть self.logos_info с данными по объектам
-        for i, logo_info in enumerate(self.logos_info):
-            x2, y2 = logo_info['point']
-            # Отрисовать кружок
-            ax.plot(x2, y2, marker='o', markersize=5, color='blue')
-            # Отрисовать текст с номером объекта рядом с точкой
-            ax.text(x2 + 2, y2 + 1, str(i+1), color='blue', fontsize=12, backgroundcolor='white')
-            # Отрисовать пунктирные линии от точки до осей
-            ax.axhline(y=y2, color='blue', linestyle=':', linewidth=1.5)
-            ax.axvline(x=x2, color='blue', linestyle=':', linewidth=1.5)
-
-        plt.tight_layout()
-        plt.show()
-
+        visualize_with_grid(combined_image, self.logos_info, figsize, mode, title)
+    
 
 
 class LayeredImageObject:
@@ -272,117 +315,166 @@ class LayeredImageObject:
         self.logos = logos if logos is not None else []
         self.logger = logger if logger else logging.getLogger(__name__)
 
-
+        # Определяем размеры холста
+        self.canvas_width = background.shape[1]
+        self.canvas_height = background.shape[0]
+        
+        
     def add_logo(self, logo, x2, y2, alpha=1.0):
         """
-        Adds a logo as a layer.
-
+        Adds a logo as a layer, cropping it if it exceeds background boundaries.
+    
         Parameters:
         - logo (np.ndarray): Logo image with alpha channel.
         - x2, y2 (int): Coordinates defining the bottom-right corner to place the logo.
         - alpha (float): Transparency factor for the logo.
         """
         logo_height, logo_width = logo.shape[:2]
-        self.logos.append({'image': logo, 'x2': x2, 'y2': y2, 'alpha': alpha, 'coords': (x2, y2), 'original_size': (logo_width, logo_height)})
+        x1 = x2 - logo_width
+        y1 = y2 - logo_height
+    
+        # Обрезаем логотип, если он выходит за границы фона
+        crop_x1 = max(0, x1)
+        crop_y1 = max(0, y1)
+        crop_x2 = min(self.canvas_width, x2)
+        crop_y2 = min(self.canvas_height, y2)
+    
+        if crop_x1 > x1 or crop_y1 > y1 or crop_x2 < x2 or crop_y2 < y2:
+            self.logger.info(f"Cropping logo at ({x1}, {y1}, {x2}, {y2}) to fit within background bounds.")
+            # Обрезаем логотип
+            logo_cropped = logo[max(0, -y1):logo_height - max(0, y2 - self.canvas_height),
+                                max(0, -x1):logo_width - max(0, x2 - self.canvas_width)]
+            x1, y1 = crop_x1, crop_y1
+            x2, y2 = crop_x2, crop_y2
+        else:
+            logo_cropped = logo
+    
+        cropped_height, cropped_width = logo_cropped.shape[:2]
+        self.logos.append({
+            'image': logo_cropped,
+            'x2': x2,
+            'y2': y2,
+            'alpha': alpha,
+            'coords': (x2, y2),
+            'final_size': (cropped_width, cropped_height)
+        })
+
 
     def save(self, filepath):
         """
-        Saves the layered image object to disk.
+        Сохраняет объект слоя в файл.
 
         Parameters:
-        - filepath (str): Path to save the object.
+        - filepath (str): Путь для сохранения объекта.
         """
+        data = {
+            'background': self.background,
+            'logos': self.logos,
+            'canvas_size': (self.canvas_width, self.canvas_height),  # Сохраняем размеры холста
+        }
         with open(filepath, 'wb') as f:
-            pickle.dump(self, f)
+            pickle.dump(data, f)
         print(f"Layered image object saved to {filepath}")
 
     @staticmethod
     def load(filepath):
         """
-        Loads a layered image object from disk.
+        Загружает объект слоя из файла.
 
         Parameters:
-        - filepath (str): Path to load the object from.
+        - filepath (str): Путь к файлу для загрузки.
 
         Returns:
-        - LayeredImageObject: Loaded layered image object.
+        - LayeredImageObject: Загруженный объект слоя.
         """
         with open(filepath, 'rb') as f:
-            return pickle.load(f)
+            data = pickle.load(f)
+        layered_image = LayeredImageObject(data['background'])
+        layered_image.logos = data['logos']
+        layered_image.canvas_width, layered_image.canvas_height = data.get('canvas_size', layered_image.background.shape[:2])
 
-    def render(self, include_background=True):
+        return layered_image
+
+
+    def render(self, include_background=True, crop_to_background=True):
         """
-        Renders the final combined image by overlaying all logos on the background.
-
+        Рендерит итоговое комбинированное изображение с учетом возможности обрезки по фону.
+    
         Parameters:
-        - include_background (bool): Whether to include the background in the final render or not.
-
+        - include_background (bool): Включать ли фон в итоговое изображение.
+        - crop_to_background (bool): Обрезать ли изображение по размеру фона.
+    
         Returns:
-        - combined_img (np.ndarray): The final combined image.
+        - combined_img (np.ndarray): Итоговое изображение.
         """
+        # Определяем размеры холста
+        max_x = max((logo['x2'] for logo in self.logos), default=0)
+        max_y = max((logo['y2'] for logo in self.logos), default=0)
+        self.canvas_width = max(max_x, self.background.shape[1])
+        self.canvas_height = max(max_y, self.background.shape[0])
+    
+        # Создаем холст
+        combined_img = np.zeros((self.canvas_height, self.canvas_width, 3), dtype=np.uint8)
+    
+        # Добавляем фон
         if include_background:
-            combined_img = self.background.copy()
-        else:
-            combined_img = np.zeros_like(self.background)
-
+            combined_img[:self.background.shape[0], :self.background.shape[1]] = self.background
+    
+        # Накладываем логотипы
         for logo_info in self.logos:
             logo = logo_info['image']
             x2, y2 = logo_info['x2'], logo_info['y2']
             alpha = logo_info['alpha']
-            self.logger.debug(f"Overlaying logo at coordinates: ({x2}, {y2}) with alpha: {alpha}")
-            #print(f"Overlaying logo at coordinates: ({x2}, {y2}) with alpha: {alpha}")
             combined_img = self.overlay_logo(combined_img, logo, x2, y2, alpha)
+    
+        # Обрезаем по размеру фона, если указано
+        if crop_to_background:
+            combined_img = combined_img[:self.background.shape[0], :self.background.shape[1]]
+    
         return combined_img
+        
 
+    
     def overlay_logo(self, background, logo, x2, y2, alpha=1.0):
         """
-        Overlays the logo onto the background image at the specified coordinates with transparency.
-        Utilizes utility functions from `utils.py`.
+        Overlays the processed logo onto the background image at the specified coordinates with transparency.
         """
         try:
             logo_height, logo_width = logo.shape[:2]
-            x1, y1 = x2 - logo_width, y2 - logo_height
-
-            # Ensure coordinates are within the background bounds
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(background.shape[1], x2)
-            y2 = min(background.shape[0], y2)
-
-            # Recalculate width and height after adjusting coordinates
-            roi_width = x2 - x1
-            roi_height = y2 - y1
-
-            if roi_width <= 0 or roi_height <= 0:
-                logging.warning(f"Logo position ({x2}, {y2}) is outside the background dimensions. Skipping overlay.")
-                return background
-
-            # Adjust logo size if it exceeds the ROI
-            if logo_width > roi_width or logo_height > roi_height:
-                logo = resize_image(
-                    logo,
-                    target_size=(roi_width, roi_height),
-                    maintain_aspect_ratio=True,
-                    padding_color=[0, 0, 0]
-                )
-                logo_height, logo_width = logo.shape[:2]
-
-            # Adjust logo if it still exceeds the ROI
-            logo = logo[:roi_height, :roi_width]
-
-            # Check if the logo has an alpha channel
-            if logo.shape[2] == 4:
-                logo_rgb = logo[:, :, :3]
-                mask = logo[:, :, 3] / 255.0 * alpha
-                inv_mask = 1.0 - mask
-                for c in range(0, 3):
-                    background[y1:y2, x1:x2, c] = (mask * logo_rgb[:, :, c] +
-                                                   inv_mask * background[y1:y2, x1:x2, c])
+            x1 = x2 - logo_width
+            y1 = y2 - logo_height
+    
+            # Обрезаем логотип, если он выходит за пределы фона
+            crop_x1 = max(0, x1)
+            crop_y1 = max(0, y1)
+            crop_x2 = min(background.shape[1], x2)
+            crop_y2 = min(background.shape[0], y2)
+    
+            roi_width = crop_x2 - crop_x1
+            roi_height = crop_y2 - crop_y1
+    
+            # Корректируем область логотипа
+            logo_cropped = logo[max(0, -y1):logo_height - max(0, y2 - background.shape[0]),
+                                max(0, -x1):logo_width - max(0, x2 - background.shape[1])]
+    
+            roi = background[crop_y1:crop_y2, crop_x1:crop_x2].astype(np.float32)
+    
+            if logo_cropped.shape[2] == 4:  # Если есть альфа-канал
+                logo_bgr = logo_cropped[:, :, :3].astype(np.float32)
+                logo_alpha_channel = (logo_cropped[:, :, 3] / 255.0) * alpha
+                logo_alpha = cv2.merge([logo_alpha_channel] * 3)
             else:
-                # If no alpha channel, apply overall alpha
-                background[y1:y2, x1:x2] = (alpha * logo + (1 - alpha) * background[y1:y2, x1:x2]).astype(np.uint8)
-
-            return background
+                logo_bgr = logo_cropped.astype(np.float32)
+                logo_alpha = np.ones(logo_bgr.shape, dtype=np.float32) * alpha
+    
+            blended_roi = logo_bgr * logo_alpha + roi * (1 - logo_alpha)
+            blended_roi = np.clip(blended_roi, 0, 255).astype(np.uint8)
+    
+            combined_img = background.copy()
+            combined_img[crop_y1:crop_y2, crop_x1:crop_x2] = blended_roi
+    
+            return combined_img
         except Exception as e:
-            logging.error(f"Error in overlaying logo: {e}")
+            self.logger.error(f"Error in overlaying logo: {e}")
             raise
+    

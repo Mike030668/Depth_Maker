@@ -116,53 +116,9 @@ def validate_model_path(model_path: str):
         raise FileNotFoundError(f"Model checkpoint not found at {model_path}. Please download it first.")
     else:
         logging.info(f"Model checkpoint found at {model_path}.")
-
-
 # ---------------------
 # Image Processing Helpers
 # ---------------------
-
-# depth_maker/depth_maker_v1/utils.py
-
-def resize_image(image: np.ndarray, target_size: tuple, maintain_aspect_ratio: bool = True,
-                interpolation: int = cv2.INTER_AREA, padding_color: list = [0, 0, 0]):
-    """
-    Resizes an image to the target size. Optionally maintains aspect ratio by adding padding.
-
-    Parameters:
-        image (np.ndarray): The image to resize.
-        target_size (tuple): The desired size as (width, height).
-        maintain_aspect_ratio (bool): Whether to maintain aspect ratio.
-        interpolation (int): OpenCV interpolation method.
-        padding_color (list): BGR color for padding borders.
-
-    Returns:
-        np.ndarray: The resized (and padded) image.
-    """
-    if not isinstance(target_size, tuple) or len(target_size) != 2:
-        logging.error("target_size must be a tuple of (width, height).")
-        raise ValueError("target_size must be a tuple of (width, height).")
-
-    if maintain_aspect_ratio:
-        h, w = image.shape[:2]
-        target_w, target_h = target_size
-        scale = min(target_w / w, target_h / h)
-        new_size = (int(w * scale), int(h * scale))
-        resized_image = cv2.resize(image, new_size, interpolation=interpolation)
-        # Add padding to match target_size
-        delta_w = target_w - new_size[0]
-        delta_h = target_h - new_size[1]
-        top, bottom = delta_h // 2, delta_h - (delta_h // 2)
-        left, right = delta_w // 2, delta_w - (delta_w // 2)
-        new_image = cv2.copyMakeBorder(resized_image, top, bottom, left, right,
-                                       cv2.BORDER_CONSTANT, value=padding_color)
-        logging.info(f"Image resized to {new_size} with padding added.")
-        return new_image
-    else:
-        resized = cv2.resize(image, target_size, interpolation=interpolation)
-        logging.info(f"Image resized to {target_size} without maintaining aspect ratio.")
-        return resized
-
 
 
 def add_alpha_channel(image: np.ndarray, alpha: int = 255) -> np.ndarray:
@@ -189,100 +145,6 @@ def add_alpha_channel(image: np.ndarray, alpha: int = 255) -> np.ndarray:
         image_with_alpha = cv2.merge((b, g, r, alpha_channel))
         logging.info("Alpha channel added to the image.")
         return image_with_alpha
-
-
-def rotate_image(image: np.ndarray, angle: float) -> np.ndarray:
-    """
-    Rotates an image around its center by the specified angle.
-
-    Parameters:
-        image (np.ndarray): The image to rotate.
-        angle (float): The rotation angle in degrees.
-
-    Returns:
-        np.ndarray: The rotated image.
-    """
-    if len(image.shape) < 2:
-        logging.error("Input image must have at least 2 dimensions.")
-        raise ValueError("Input image must have at least 2 dimensions.")
-
-    (h, w) = image.shape[:2]
-    center = (w // 2, h // 2)
-    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-    cos = np.abs(M[0, 0])
-    sin = np.abs(M[0, 1])
-    # Compute the new bounding dimensions of the image
-    new_w = int((h * sin) + (w * cos))
-    new_h = int((h * cos) + (w * sin))
-    # Adjust the rotation matrix to take into account translation
-    M[0, 2] += (new_w / 2) - center[0]
-    M[1, 2] += (new_h / 2) - center[1]
-    # Perform the actual rotation and return the image
-    rotated = cv2.warpAffine(image, M, (new_w, new_h),
-                             flags=cv2.INTER_LINEAR,
-                             borderMode=cv2.BORDER_CONSTANT,
-                             borderValue=(0, 0, 0, 0) if image.shape[2] == 4 else (0, 0, 0))
-    logging.info(f"Image rotated by {angle} degrees. New size: ({new_w}, {new_h}).")
-    return rotated
-
-
-def reflect_image(image: np.ndarray, mode: str = 'horizontal') -> np.ndarray:
-    """
-    Reflects the image based on the specified mode.
-
-    Parameters:
-        image (np.ndarray): The image to reflect.
-        mode (str): The reflection mode - 'horizontal', 'vertical', or 'both'.
-
-    Returns:
-        np.ndarray: The reflected image.
-    """
-    if mode == 'horizontal':
-        reflected = cv2.flip(image, 1)
-    elif mode == 'vertical':
-        reflected = cv2.flip(image, 0)
-    elif mode == 'both':
-        reflected = cv2.flip(image, -1)
-    else:
-        logging.error("Invalid reflection mode. Choose from 'horizontal', 'vertical', or 'both'.")
-        raise ValueError("Invalid reflection mode. Choose from 'horizontal', 'vertical', or 'both'.")
-
-    logging.info(f"Image reflected {mode}.")
-    return reflected
-
-
-# ---------------------
-# Visualization Helpers
-# ---------------------
-
-def display_image(image: np.ndarray, title: str = "Image", cmap: str = None, figsize: tuple = (10, 8)):
-    """
-    Displays an image using matplotlib.
-
-    Parameters:
-        image (np.ndarray): The image to display.
-        title (str): The title of the plot.
-        cmap (str, optional): Colormap for grayscale images.
-        figsize (tuple, optional): Size of the figure.
-    """
-    plt.figure(figsize=figsize)
-    if len(image.shape) == 2:
-        plt.imshow(image, cmap=cmap if cmap else 'gray')
-    elif image.shape[2] == 4:
-        # Convert BGRA to RGBA
-        image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
-        plt.imshow(image)
-    elif image.shape[2] == 3:
-        # Convert BGR to RGB
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        plt.imshow(image)
-    else:
-        logging.error("Unsupported image format for display.")
-        raise ValueError("Unsupported image format for display.")
-
-    plt.title(title)
-    plt.axis('off')
-    plt.show()
 
 
 # ---------------------
@@ -370,3 +232,83 @@ def load_image(path, mode=cv2.IMREAD_UNCHANGED):
     except Exception as e:
         logging.error(f"Failed to load image from {path}. Error: {e}")
         raise FileNotFoundError(f"Image not found or cannot be loaded at {path}. Error: {e}")
+
+# ---------------------
+# Visualize Management
+# ---------------------
+    
+def visualize_with_grid(combined_image, processed_logos, figsize=(14, 9), mode='depth', title="Combined Image with Logos and Coordinate Grid"):
+    """
+    Visualizes the combined image with a coordinate grid and logo positions.
+
+    Parameters:
+    - combined_image (np.ndarray): The combined image to visualize.
+    - processed_logos (list): List of processed logos with their coordinates.
+    - figsize (tuple): Figure size for the visualization.
+    - mode (str): Visualization mode ('depth', 'gray', or 'color').
+    - title (str): Title for the plot.
+    """
+    # Проверяем каналы изображения
+    if combined_image.shape[2] == 4:
+        # RGBA для matplotlib
+        display_image = cv2.cvtColor(combined_image, cv2.COLOR_BGRA2RGBA)
+    else:
+        # RGB для matplotlib
+        display_image = cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Обрабатываем режимы отображения
+    if mode == 'depth':
+        # Преобразуем в градации серого, затем применяем цветовую карту magma
+        gray_image = cv2.cvtColor(display_image, cv2.COLOR_RGBA2GRAY) if display_image.shape[2] == 4 else cv2.cvtColor(display_image, cv2.COLOR_RGB2GRAY)
+        im = ax.imshow(gray_image, cmap='magma')
+        plt.colorbar(im, ax=ax)
+    elif mode == 'gray':
+        # Отображаем в градациях серого без colorbar
+        gray_image = cv2.cvtColor(display_image, cv2.COLOR_RGBA2GRAY) if display_image.shape[2] == 4 else cv2.cvtColor(display_image, cv2.COLOR_RGB2GRAY)
+        ax.imshow(gray_image, cmap='gray')
+    else:
+        # По умолчанию отображаем в цвете
+        ax.imshow(display_image)
+
+    # Настраиваем заголовок и оси
+    ax.set_title(title)
+    ax.axis('on')
+
+    # Определяем размеры изображения и шаг сетки
+    height, width = combined_image.shape[:2]
+    step_size = 50
+
+    # Рисуем сетку
+    for x in range(0, width, step_size):
+        ax.axvline(x=x, color='red', linestyle='--', linewidth=0.5)
+    for y in range(0, height, step_size):
+        ax.axhline(y=y, color='red', linestyle='--', linewidth=0.5)
+
+    # Отображаем координаты логотипов
+    for i, logo_info in enumerate(processed_logos):
+        # Если 'coords' отсутствует, но есть 'point', создаем 'coords' на основе 'point'
+        if 'coords' not in logo_info and 'point' in logo_info:
+            logo_info['coords'] = logo_info['point']
+
+        # Проверяем, что 'coords' существует
+        if 'coords' in logo_info:
+            x2, y2 = logo_info['coords']
+            ax.plot(x2, y2, marker='o', markersize=5, color='blue')
+            ax.text(
+                x2 + 5, y2 + 5, f"Logo {i + 1}\n({x2}, {y2})", 
+                color='blue', fontsize=10, backgroundcolor='white'
+            )
+        else:
+            print(f"Warning: Logo {i + 1} does not have 'coords' or 'point'.")
+
+    # Добавляем шкалы
+    ax.set_xticks(range(0, width, step_size))
+    ax.set_yticks(range(0, height, step_size))
+    ax.set_xticklabels(range(0, width, step_size))
+    ax.set_yticklabels(range(0, height, step_size))
+
+    plt.tight_layout()
+    plt.show()
+
